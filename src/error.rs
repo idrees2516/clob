@@ -110,4 +110,27 @@ impl fmt::Display for InfrastructureError {
 
 impl Error for InfrastructureError {}
 
+#[derive(Debug)]
+pub enum RiskError {
+    InsufficientData(String),
+    InvalidParameter(String),
+    CalculationError(String),
+    ModelError(String),
+    ValidationError(String),
+}
+
+impl fmt::Display for RiskError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RiskError::InsufficientData(msg) => write!(f, "Insufficient data: {}", msg),
+            RiskError::InvalidParameter(msg) => write!(f, "Invalid parameter: {}", msg),
+            RiskError::CalculationError(msg) => write!(f, "Calculation error: {}", msg),
+            RiskError::ModelError(msg) => write!(f, "Model error: {}", msg),
+            RiskError::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+        }
+    }
+}
+
+impl Error for RiskError {}
+
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;

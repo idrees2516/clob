@@ -1,5 +1,7 @@
 pub mod alerting;
 pub mod branch_prediction;
+pub mod cache;
+pub mod compiler_optimization;
 pub mod lock_free;
 pub mod memory;
 pub mod networking;
@@ -7,10 +9,13 @@ pub mod numa;
 pub mod profiling;
 pub mod scaling;
 pub mod simd;
+pub mod testing;
 pub mod timing;
 
 pub use alerting::*;
 pub use branch_prediction::*;
+pub use cache::*;
+pub use compiler_optimization::*;
 pub use lock_free::*;
 pub use memory::*;
 pub use networking::*;
@@ -18,4 +23,5 @@ pub use numa::*;
 pub use profiling::*;
 pub use scaling::*;
 pub use simd::*;
+pub use testing::*;
 pub use timing::*;

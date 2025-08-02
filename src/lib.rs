@@ -9,11 +9,14 @@ use tracing::{debug, error, info, warn};
 
 // Export modules
 pub mod error;
+pub mod execution;
 pub mod infrastructure;
 pub mod math;
 pub mod models;
 pub mod orderbook;
+pub mod risk;
 pub mod rollup;
+pub mod utils;
 pub mod zkvm;
 
 #[derive(Debug, Error)]

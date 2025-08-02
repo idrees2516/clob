@@ -303,3 +303,366 @@ impl PrefetchConfig {
         }
     }
 }
+
+/// Advanced predictive prefetching system
+pub struct PredictivePrefetcher {
+    /// History of memory access patterns
+    access_history: std::collections::VecDeque<MemoryAccess>,
+    /// Pattern recognition engine
+    pattern_engine: PatternRecognitionEngine,
+    /// Prefetch accuracy tracking
+    accuracy_tracker: AccuracyTracker,
+    /// Configuration
+    config: PredictivePrefetchConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryAccess {
+    pub address: usize,
+    pub timestamp: u64,
+    pub access_type: AccessType,
+    pub cache_hit: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum AccessType {
+    Read,
+    Write,
+    Execute,
+}
+
+pub struct PatternRecognitionEngine {
+    /// Detected patterns
+    patterns: Vec<AccessPattern>,
+    /// Pattern confidence scores
+    confidence_scores: Vec<f64>,
+    /// Learning rate for pattern adaptation
+    learning_rate: f64,
+}
+
+pub struct AccuracyTracker {
+    /// Total prefetch attempts
+    total_prefetches: u64,
+    /// Successful prefetches (actually used)
+    successful_prefetches: u64,
+    /// False positive prefetches
+    false_positives: u64,
+    /// Accuracy history for trend analysis
+    accuracy_history: std::collections::VecDeque<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccessPattern {
+    pub pattern_type: PatternType,
+    pub stride: Option<isize>,
+    pub period: Option<usize>,
+    pub confidence: f64,
+    pub last_seen: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum PatternType {
+    Sequential,
+    Strided,
+    Periodic,
+    Linked,
+    Random,
+}
+
+pub struct PredictivePrefetchConfig {
+    pub max_history_size: usize,
+    pub min_pattern_confidence: f64,
+    pub max_prefetch_distance: usize,
+    pub accuracy_threshold: f64,
+    pub learning_enabled: bool,
+}
+
+impl PredictivePrefetcher {
+    pub fn new(config: PredictivePrefetchConfig) -> Self {
+        Self {
+            access_history: std::collections::VecDeque::with_capacity(config.max_history_size),
+            pattern_engine: PatternRecognitionEngine::new(0.1),
+            accuracy_tracker: AccuracyTracker::new(),
+            config,
+        }
+    }
+
+    /// Record a memory access and potentially trigger prefetch
+    pub unsafe fn record_and_prefetch(&mut self, access: MemoryAccess) {
+        // Record the access
+        self.access_history.push_back(access.clone());
+        if self.access_history.len() > self.config.max_history_size {
+            self.access_history.pop_front();
+        }
+
+        // Update pattern recognition
+        if self.config.learning_enabled {
+            self.pattern_engine.update_patterns(&self.access_history);
+        }
+
+        // Generate prefetch predictions
+        let predictions = self.pattern_engine.predict_next_accesses(
+            &access,
+            self.config.max_prefetch_distance,
+        );
+
+        // Execute prefetches for high-confidence predictions
+        for prediction in predictions {
+            if prediction.confidence >= self.config.min_pattern_confidence {
+                self.execute_prefetch(prediction);
+            }
+        }
+    }
+
+    unsafe fn execute_prefetch(&mut self, prediction: PrefetchPrediction) {
+        DataPrefetcher::prefetch_line(
+            prediction.address as *const u8,
+            prediction.hint,
+        );
+        
+        self.accuracy_tracker.total_prefetches += 1;
+        
+        // Track prediction for accuracy measurement
+        // (In practice, this would be done when the address is actually accessed)
+    }
+
+    /// Get prefetching statistics
+    pub fn get_statistics(&self) -> PrefetchStatistics {
+        PrefetchStatistics {
+            total_prefetches: self.accuracy_tracker.total_prefetches,
+            successful_prefetches: self.accuracy_tracker.successful_prefetches,
+            accuracy: self.accuracy_tracker.get_accuracy(),
+            detected_patterns: self.pattern_engine.patterns.len(),
+            avg_confidence: self.pattern_engine.get_average_confidence(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct PrefetchPrediction {
+    pub address: usize,
+    pub confidence: f64,
+    pub hint: PrefetchHint,
+    pub pattern_type: PatternType,
+}
+
+#[derive(Debug)]
+pub struct PrefetchStatistics {
+    pub total_prefetches: u64,
+    pub successful_prefetches: u64,
+    pub accuracy: f64,
+    pub detected_patterns: usize,
+    pub avg_confidence: f64,
+}
+
+impl PatternRecognitionEngine {
+    pub fn new(learning_rate: f64) -> Self {
+        Self {
+            patterns: Vec::new(),
+            confidence_scores: Vec::new(),
+            learning_rate,
+        }
+    }
+
+    pub fn update_patterns(&mut self, history: &std::collections::VecDeque<MemoryAccess>) {
+        if history.len() < 3 {
+            return;
+        }
+
+        // Detect sequential patterns
+        self.detect_sequential_pattern(history);
+        
+        // Detect strided patterns
+        self.detect_strided_pattern(history);
+        
+        // Detect periodic patterns
+        self.detect_periodic_pattern(history);
+    }
+
+    fn detect_sequential_pattern(&mut self, history: &std::collections::VecDeque<MemoryAccess>) {
+        let recent_accesses: Vec<_> = history.iter().rev().take(5).collect();
+        
+        let mut sequential_count = 0;
+        for window in recent_accesses.windows(2) {
+            let diff = window[0].address as isize - window[1].address as isize;
+            if diff.abs() <= 64 { // Within cache line or adjacent
+                sequential_count += 1;
+            }
+        }
+        
+        let confidence = sequential_count as f64 / (recent_accesses.len() - 1) as f64;
+        
+        if confidence > 0.7 {
+            self.update_or_add_pattern(AccessPattern {
+                pattern_type: PatternType::Sequential,
+                stride: None,
+                period: None,
+                confidence,
+                last_seen: recent_accesses[0].timestamp,
+            });
+        }
+    }
+
+    fn detect_strided_pattern(&mut self, history: &std::collections::VecDeque<MemoryAccess>) {
+        if history.len() < 4 {
+            return;
+        }
+
+        let recent: Vec<_> = history.iter().rev().take(4).collect();
+        let strides: Vec<isize> = recent.windows(2)
+            .map(|w| w[0].address as isize - w[1].address as isize)
+            .collect();
+
+        // Check for consistent stride
+        if strides.len() >= 2 {
+            let first_stride = strides[0];
+            let consistent = strides.iter().all(|&s| s == first_stride);
+            
+            if consistent && first_stride != 0 {
+                self.update_or_add_pattern(AccessPattern {
+                    pattern_type: PatternType::Strided,
+                    stride: Some(first_stride),
+                    period: None,
+                    confidence: 0.9,
+                    last_seen: recent[0].timestamp,
+                });
+            }
+        }
+    }
+
+    fn detect_periodic_pattern(&mut self, history: &std::collections::VecDeque<MemoryAccess>) {
+        // Look for repeating address patterns
+        if history.len() < 8 {
+            return;
+        }
+
+        let addresses: Vec<usize> = history.iter().map(|a| a.address).collect();
+        
+        // Check for periods of length 2-4
+        for period in 2..=4 {
+            if addresses.len() >= period * 2 {
+                let mut matches = 0;
+                let mut total_checks = 0;
+                
+                for i in period..addresses.len() {
+                    if addresses[i] == addresses[i - period] {
+                        matches += 1;
+                    }
+                    total_checks += 1;
+                }
+                
+                let confidence = matches as f64 / total_checks as f64;
+                if confidence > 0.8 {
+                    self.update_or_add_pattern(AccessPattern {
+                        pattern_type: PatternType::Periodic,
+                        stride: None,
+                        period: Some(period),
+                        confidence,
+                        last_seen: history.back().unwrap().timestamp,
+                    });
+                }
+            }
+        }
+    }
+
+    fn update_or_add_pattern(&mut self, new_pattern: AccessPattern) {
+        // Find existing pattern of same type
+        if let Some(existing_idx) = self.patterns.iter().position(|p| {
+            std::mem::discriminant(&p.pattern_type) == std::mem::discriminant(&new_pattern.pattern_type)
+        }) {
+            // Update existing pattern with exponential moving average
+            let existing = &mut self.patterns[existing_idx];
+            existing.confidence = existing.confidence * (1.0 - self.learning_rate) + 
+                                new_pattern.confidence * self.learning_rate;
+            existing.last_seen = new_pattern.last_seen;
+            existing.stride = new_pattern.stride.or(existing.stride);
+            existing.period = new_pattern.period.or(existing.period);
+        } else {
+            // Add new pattern
+            self.patterns.push(new_pattern);
+        }
+    }
+
+    pub fn predict_next_accesses(
+        &self,
+        current_access: &MemoryAccess,
+        max_predictions: usize,
+    ) -> Vec<PrefetchPrediction> {
+        let mut predictions = Vec::new();
+
+        for pattern in &self.patterns {
+            match &pattern.pattern_type {
+                PatternType::Sequential => {
+                    predictions.push(PrefetchPrediction {
+                        address: current_access.address + 64, // Next cache line
+                        confidence: pattern.confidence,
+                        hint: PrefetchHint::T0,
+                        pattern_type: pattern.pattern_type.clone(),
+                    });
+                }
+                PatternType::Strided => {
+                    if let Some(stride) = pattern.stride {
+                        let next_addr = (current_access.address as isize + stride) as usize;
+                        predictions.push(PrefetchPrediction {
+                            address: next_addr,
+                            confidence: pattern.confidence,
+                            hint: PrefetchHint::T0,
+                            pattern_type: pattern.pattern_type.clone(),
+                        });
+                    }
+                }
+                PatternType::Periodic => {
+                    // Predict based on historical periodic pattern
+                    // Implementation would depend on stored period data
+                }
+                _ => {}
+            }
+        }
+
+        predictions.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
+        predictions.truncate(max_predictions);
+        predictions
+    }
+
+    pub fn get_average_confidence(&self) -> f64 {
+        if self.patterns.is_empty() {
+            0.0
+        } else {
+            self.patterns.iter().map(|p| p.confidence).sum::<f64>() / self.patterns.len() as f64
+        }
+    }
+}
+
+impl AccuracyTracker {
+    pub fn new() -> Self {
+        Self {
+            total_prefetches: 0,
+            successful_prefetches: 0,
+            false_positives: 0,
+            accuracy_history: std::collections::VecDeque::with_capacity(100),
+        }
+    }
+
+    pub fn get_accuracy(&self) -> f64 {
+        if self.total_prefetches == 0 {
+            0.0
+        } else {
+            self.successful_prefetches as f64 / self.total_prefetches as f64
+        }
+    }
+
+    pub fn record_prefetch_outcome(&mut self, successful: bool) {
+        if successful {
+            self.successful_prefetches += 1;
+        } else {
+            self.false_positives += 1;
+        }
+        
+        let current_accuracy = self.get_accuracy();
+        self.accuracy_history.push_back(current_accuracy);
+        
+        if self.accuracy_history.len() > 100 {
+            self.accuracy_history.pop_front();
+        }
+    }
+}

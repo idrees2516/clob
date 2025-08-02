@@ -1,0 +1,327 @@
+# Advanced Trading System Production Configuration
+
+[system]
+name = "advanced-trading-system"
+version = "1.0.0"
+environment = "production"
+instance_id = "${HOSTNAME:-trading-001}"
+
+[performance]
+# Ultra-low latency targets
+target_latency_ns = 500
+max_cpu_usage = 0.8
+memory_pool_size = 1073741824  # 1GB
+numa_node = 0
+cpu_affinity = [0, 1, 2, 3, 4, 5, 6, 7]
+huge_pages_enabled = true
+lock_free_enabled = true
+simd_optimizations = true
+
+# Thread configuration
+[performance.threads]
+market_data_threads = 2
+quote_engine_threads = 4
+risk_monitor_threads = 1
+execution_threads = 2
+
+# Cache configuration
+[performance.cache]
+l1_cache_size = 32768      # 32KB
+l2_cache_size = 262144     # 256KB
+l3_cache_size = 33554432   # 32MB
+prefetch_distance = 64
+
+# Mathematical Models Configuration
+[models]
+
+[models.avellaneda_stoikov]
+enabled = true
+gamma = 0.1                # Risk aversion parameter
+sigma = 0.2               # Volatility estimate
+k = 1.5                   # Market impact parameter
+A = 140.0                 # Order arrival rate
+T = 1.0                   # Time horizon (years)
+inventory_penalty = 0.01  # Inventory penalty factor
+adverse_selection_threshold = 0.05
+
+[models.gueant_lehalle_tapia]
+enabled = true
+correlation_window = 252           # Trading days for correlation estimation
+rebalance_frequency = 3600         # Rebalance every hour (seconds)
+max_assets = 10                    # Maximum number of assets
+correlation_threshold = 0.1        # Minimum correlation for inclusion
+portfolio_var_limit = 100000.0     # Portfolio VaR limit ($)
+
+[models.cartea_jaimungal]
+enabled = true
+jump_detection_threshold = 3.0     # Standard deviations for jump detection
+jump_intensity_window = 100        # Window for intensity estimation
+double_exponential_eta_plus = 10.0 # Upward jump decay parameter
+double_exponential_eta_minus = 15.0 # Downward jump decay parameter
+jump_probability = 0.4             # Probability of upward jump
+
+# SDE Solver Configuration
+[models.sde_solvers]
+default_solver = "milstein"        # euler_maruyama, milstein, runge_kutta
+time_step = 0.001                  # Time step size
+max_iterations = 10000             # Maximum iterations
+convergence_tolerance = 1e-8       # Convergence tolerance
+stability_check = true             # Enable stability checking
+
+# Hawkes Process Configuration
+[models.hawkes]
+baseline_intensity = 1.0           # λ₀ - baseline intensity
+self_excitation = 0.5              # α - self-excitation parameter
+decay_rate = 2.0                   # β - decay rate
+max_history = 1000                 # Maximum event history
+kernel_type = "exponential"        # exponential, power_law
+
+# Rough Volatility Configuration
+[models.rough_volatility]
+hurst_parameter = 0.1              # H ∈ (0, 1)
+volatility_of_volatility = 0.3     # ν parameter
+mean_reversion_speed = 2.0         # λ parameter
+long_term_variance = 0.04          # θ parameter
+
+# Execution Engine Configuration
+[execution]
+
+[execution.twap]
+enabled = true
+default_participation_rate = 0.1   # 10% of market volume
+max_participation_rate = 0.3       # Maximum 30% participation
+min_participation_rate = 0.01      # Minimum 1% participation
+volume_forecast_window = 20        # Minutes for volume forecasting
+catch_up_aggressiveness = 1.5      # Catch-up multiplier
+slowdown_factor = 0.8              # Slowdown factor when ahead
+
+[execution.vwap]
+enabled = true
+volume_profile_window = 20         # Days for volume profile
+intraday_buckets = 48              # 30-minute buckets
+volume_forecast_decay = 0.95       # Exponential decay for forecasting
+
+[execution.implementation_shortfall]
+enabled = true
+temporary_impact_coefficient = 0.5  # η parameter
+permanent_impact_coefficient = 0.1  # λ parameter
+volatility_risk_aversion = 0.5     # Risk aversion for timing risk
+
+# Risk Management Configuration
+[risk_management]
+enabled = true
+update_frequency_ms = 1            # Risk updates every 1ms
+
+# Position limits
+max_position_size = 1000000        # Maximum position size
+max_portfolio_var = 100000.0       # Maximum portfolio VaR ($)
+max_leverage = 3.0                 # Maximum leverage ratio
+max_concentration = 0.3            # Maximum concentration (30%)
+
+# VaR configuration
+var_confidence = 0.95              # 95% confidence level
+var_window = 252                   # Trading days for VaR calculation
+var_method = "historical"          # historical, parametric, monte_carlo
+
+# Stress testing
+stress_test_frequency = 3600       # Stress test every hour
+stress_scenarios = [
+    "2008_crisis",
+    "2020_covid",
+    "flash_crash",
+    "correlation_breakdown"
+]
+
+# Market Data Configuration
+[market_data]
+feed_url = "tcp://market-data-feed:12345"
+backup_feed_url = "tcp://backup-feed:12345"
+buffer_size = 1048576              # 1MB buffer
+timeout_ms = 1000                  # Connection timeout
+max_reconnect_attempts = 5
+reconnect_delay_ms = 100
+
+# Data validation
+price_change_threshold = 0.1       # 10% price change threshold
+volume_spike_threshold = 5.0       # 5x volume spike threshold
+stale_data_threshold_ms = 100      # Consider data stale after 100ms
+
+# Database Configuration
+[database]
+url = "postgresql://trading:${DATABASE_PASSWORD}@postgres:5432/trading"
+max_connections = 20
+min_connections = 5
+connection_timeout = 30
+idle_timeout = 300
+max_lifetime = 3600
+
+# Connection pool settings
+pool_size = 20
+pool_timeout = 30
+pool_recycle = 3600
+
+# Query settings
+statement_timeout = 30000          # 30 seconds
+lock_timeout = 5000               # 5 seconds
+idle_in_transaction_timeout = 60000 # 1 minute
+
+# Redis Configuration
+[redis]
+url = "redis://:${REDIS_PASSWORD}@redis:6379"
+max_connections = 10
+min_connections = 2
+timeout_ms = 1000
+retry_attempts = 3
+retry_delay_ms = 100
+
+# Cache settings
+default_ttl = 3600                 # 1 hour default TTL
+max_memory_policy = "allkeys-lru"
+max_memory = "2gb"
+
+# Monitoring Configuration
+[monitoring]
+enabled = true
+metrics_port = 8080
+health_port = 8081
+admin_port = 8082
+prometheus_enabled = true
+
+# Metrics collection
+collect_system_metrics = true
+collect_performance_metrics = true
+collect_business_metrics = true
+metrics_interval_ms = 100          # Collect metrics every 100ms
+
+# Health checks
+health_check_interval_ms = 1000    # Health check every second
+health_check_timeout_ms = 500      # Health check timeout
+
+# Performance monitoring
+latency_histogram_buckets = [
+    0.000001,   # 1μs
+    0.000005,   # 5μs
+    0.00001,    # 10μs
+    0.00005,    # 50μs
+    0.0001,     # 100μs
+    0.0005,     # 500μs
+    0.001,      # 1ms
+    0.005,      # 5ms
+    0.01,       # 10ms
+    0.05,       # 50ms
+    0.1         # 100ms
+]
+
+# Logging Configuration
+[logging]
+level = "info"
+format = "json"                    # json, structured, plain
+file_path = "/opt/trading/logs/trading.log"
+max_file_size = "100MB"
+max_files = 10
+compress_rotated = true
+
+# Log levels by component
+[logging.levels]
+"trading::models" = "info"
+"trading::execution" = "info"
+"trading::risk" = "warn"
+"trading::performance" = "debug"
+"trading::market_data" = "info"
+
+# Async logging for performance
+async_logging = true
+async_buffer_size = 65536          # 64KB buffer
+flush_interval_ms = 100            # Flush every 100ms
+
+# Network Configuration
+[network]
+# TCP settings
+tcp_nodelay = true
+tcp_keepalive = true
+tcp_keepalive_idle = 60
+tcp_keepalive_interval = 10
+tcp_keepalive_probes = 3
+
+# Buffer sizes
+send_buffer_size = 1048576         # 1MB
+receive_buffer_size = 1048576      # 1MB
+
+# Kernel bypass settings
+dpdk_enabled = false               # Enable DPDK if available
+solarflare_enabled = false         # Enable Solarflare if available
+mellanox_enabled = false           # Enable Mellanox if available
+
+# Security Configuration
+[security]
+# TLS settings
+tls_enabled = true
+tls_cert_path = "/opt/trading/certs/server.crt"
+tls_key_path = "/opt/trading/certs/server.key"
+tls_ca_path = "/opt/trading/certs/ca.crt"
+
+# Authentication
+auth_enabled = true
+jwt_secret = "${JWT_SECRET}"
+jwt_expiry = 3600                  # 1 hour
+
+# API rate limiting
+rate_limit_enabled = true
+rate_limit_requests = 1000         # Requests per minute
+rate_limit_burst = 100             # Burst capacity
+
+# Backup Configuration
+[backup]
+enabled = true
+backup_interval = 3600             # Backup every hour
+backup_retention_days = 30         # Keep backups for 30 days
+backup_path = "/opt/trading/backup"
+compression_enabled = true
+encryption_enabled = true
+
+# Backup types
+incremental_backup = true
+full_backup_interval = 86400       # Full backup daily
+differential_backup_interval = 3600 # Differential backup hourly
+
+# Feature Flags
+[features]
+# Model features
+avellaneda_stoikov_enabled = true
+gueant_lehalle_tapia_enabled = true
+cartea_jaimungal_enabled = true
+rough_volatility_enabled = true
+hawkes_process_enabled = true
+
+# Execution features
+twap_execution_enabled = true
+vwap_execution_enabled = true
+implementation_shortfall_enabled = true
+
+# Performance features
+lock_free_structures_enabled = true
+simd_optimizations_enabled = true
+numa_optimization_enabled = true
+kernel_bypass_enabled = false
+
+# Risk features
+real_time_risk_enabled = true
+stress_testing_enabled = true
+var_calculation_enabled = true
+
+# Development and Testing
+[development]
+debug_mode = false
+profiling_enabled = false
+benchmark_mode = false
+test_mode = false
+
+# Mock data for testing
+mock_market_data = false
+mock_execution = false
+mock_risk_calculations = false
+
+# Performance testing
+load_testing_enabled = false
+stress_testing_enabled = false
+chaos_engineering_enabled = false

@@ -1,0 +1,257 @@
+groups:
+  - name: trading-system-critical
+    interval: 1s
+    rules:
+      # Ultra-low latency alerts
+      - alert: HighLatency
+        expr: trading_latency_p99_seconds > 0.0005  # 500ns
+        for: 1s
+        labels:
+          severity: critical
+          component: performance
+        annotations:
+          summary: "Trading system latency exceeded target"
+          description: "P99 latency is {{ $value }}s, exceeding 500ns target"
+          runbook_url: "https://docs.company.com/runbooks/high-latency"
+
+      - alert: LatencySpike
+        expr: increase(trading_latency_p99_seconds[5s]) > 0.0001  # 100ns increase
+        for: 0s  # Immediate alert
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "Sudden latency spike detected"
+          description: "Latency increased by {{ $value }}s in the last 5 seconds"
+
+      # Throughput alerts
+      - alert: LowThroughput
+        expr: rate(trading_operations_total[1m]) < 100000  # 100k ops/sec
+        for: 10s
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "Trading system throughput below target"
+          description: "Current throughput: {{ $value }} ops/sec, target: 100k ops/sec"
+
+      - alert: ThroughputDrop
+        expr: (rate(trading_operations_total[1m]) / rate(trading_operations_total[5m] offset 1m)) < 0.8
+        for: 5s
+        labels:
+          severity: critical
+          component: performance
+        annotations:
+          summary: "Significant throughput drop detected"
+          description: "Throughput dropped by {{ printf \"%.1f\" (1 - $value) | mul 100 }}%"
+
+  - name: trading-system-risk
+    interval: 1s
+    rules:
+      # Risk management alerts
+      - alert: RiskLimitBreach
+        expr: trading_portfolio_var > 100000  # $100k VaR limit
+        for: 0s  # Immediate alert
+        labels:
+          severity: critical
+          component: risk
+        annotations:
+          summary: "Portfolio VaR limit breached"
+          description: "Current VaR: ${{ $value }}, limit: $100,000"
+          action: "Immediate position reduction required"
+
+      - alert: PositionLimitBreach
+        expr: abs(trading_position_size) > 1000000  # 1M position limit
+        for: 0s
+        labels:
+          severity: critical
+          component: risk
+        annotations:
+          summary: "Position size limit breached"
+          description: "Current position: {{ $value }}, limit: 1,000,000"
+
+      - alert: HighLeverage
+        expr: trading_leverage_ratio > 3.0
+        for: 5s
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "High leverage detected"
+          description: "Current leverage: {{ $value }}x, limit: 3.0x"
+
+      - alert: ConcentrationRisk
+        expr: trading_concentration_risk > 0.3  # 30% concentration limit
+        for: 10s
+        labels:
+          severity: warning
+          component: risk
+        annotations:
+          summary: "High concentration risk"
+          description: "Concentration risk: {{ printf \"%.1f\" ($value | mul 100) }}%"
+
+  - name: trading-system-errors
+    interval: 1s
+    rules:
+      # Error rate alerts
+      - alert: HighErrorRate
+        expr: rate(trading_errors_total[1m]) > 10  # 10 errors/sec
+        for: 5s
+        labels:
+          severity: critical
+          component: reliability
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate: {{ $value }} errors/sec"
+
+      - alert: ModelFailure
+        expr: trading_model_failures_total > 0
+        for: 0s
+        labels:
+          severity: critical
+          component: models
+        annotations:
+          summary: "Trading model failure detected"
+          description: "Model {{ $labels.model }} has failed"
+
+      - alert: ExecutionFailure
+        expr: rate(trading_execution_failures_total[1m]) > 1
+        for: 5s
+        labels:
+          severity: critical
+          component: execution
+        annotations:
+          summary: "High execution failure rate"
+          description: "Execution failure rate: {{ $value }} failures/sec"
+
+  - name: system-resources
+    interval: 5s
+    rules:
+      # System resource alerts
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 30s
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage: {{ $value }}%"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 30s
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage: {{ $value }}%"
+
+      - alert: DiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+        for: 60s
+        labels:
+          severity: warning
+          component: system
+        annotations:
+          summary: "Low disk space"
+          description: "Disk usage: {{ $value }}% on {{ $labels.mountpoint }}"
+
+      - alert: NetworkLatency
+        expr: node_network_latency_seconds > 0.001  # 1ms
+        for: 10s
+        labels:
+          severity: warning
+          component: network
+        annotations:
+          summary: "High network latency"
+          description: "Network latency: {{ $value }}s"
+
+  - name: trading-system-health
+    interval: 5s
+    rules:
+      # Health check alerts
+      - alert: ServiceDown
+        expr: up{job="trading-system"} == 0
+        for: 5s
+        labels:
+          severity: critical
+          component: availability
+        annotations:
+          summary: "Trading system is down"
+          description: "Trading system instance {{ $labels.instance }} is not responding"
+
+      - alert: DatabaseDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 10s
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database is down"
+          description: "PostgreSQL database is not responding"
+
+      - alert: RedisDown
+        expr: up{job="redis-exporter"} == 0
+        for: 10s
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache is not responding"
+
+      - alert: MarketDataFeedDown
+        expr: trading_market_data_last_update_seconds > 5
+        for: 1s
+        labels:
+          severity: critical
+          component: market-data
+        annotations:
+          summary: "Market data feed is stale"
+          description: "Last market data update was {{ $value }} seconds ago"
+
+  - name: trading-system-business
+    interval: 1s
+    rules:
+      # Business logic alerts
+      - alert: NoTradingActivity
+        expr: rate(trading_orders_total[5m]) == 0
+        for: 30s
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "No trading activity detected"
+          description: "No orders placed in the last 5 minutes"
+
+      - alert: UnusualTradingVolume
+        expr: rate(trading_volume_total[1m]) > (avg_over_time(rate(trading_volume_total[1m])[1h]) * 3)
+        for: 10s
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "Unusual trading volume detected"
+          description: "Current volume is 3x higher than average"
+
+      - alert: PnLAlert
+        expr: trading_unrealized_pnl < -50000  # -$50k loss
+        for: 5s
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "Significant unrealized loss"
+          description: "Unrealized P&L: ${{ $value }}"
+
+      - alert: ModelDivergence
+        expr: abs(trading_model_spread_avellaneda_stoikov - trading_model_spread_gueant_lehalle_tapia) > 0.01
+        for: 30s
+        labels:
+          severity: warning
+          component: models
+        annotations:
+          summary: "Model spread divergence detected"
+          description: "Spread difference: {{ $value }} between AS and GLT models"

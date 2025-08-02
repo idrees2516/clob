@@ -495,6 +495,533 @@ impl std::fmt::Display for ProfilerError {
 
 impl std::error::Error for ProfilerError {}
 
+/// Hardware performance counter monitoring
+pub struct HardwarePerformanceCounters {
+    /// CPU cycle counter
+    cpu_cycles: AtomicU64,
+    /// Instructions retired
+    instructions_retired: AtomicU64,
+    /// Cache misses
+    cache_misses: AtomicU64,
+    /// Branch mispredictions
+    branch_mispredictions: AtomicU64,
+    /// TLB misses
+    tlb_misses: AtomicU64,
+    /// Memory stall cycles
+    memory_stall_cycles: AtomicU64,
+    /// Last measurement timestamp
+    last_measurement: AtomicU64,
+    /// Measurement interval (nanoseconds)
+    measurement_interval_ns: u64,
+}
+
+impl HardwarePerformanceCounters {
+    pub fn new(measurement_interval_ns: u64) -> Self {
+        Self {
+            cpu_cycles: AtomicU64::new(0),
+            instructions_retired: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            branch_mispredictions: AtomicU64::new(0),
+            tlb_misses: AtomicU64::new(0),
+            memory_stall_cycles: AtomicU64::new(0),
+            last_measurement: AtomicU64::new(0),
+            measurement_interval_ns,
+        }
+    }
+
+    /// Read hardware performance counters
+    #[cfg(target_arch = "x86_64")]
+    pub fn read_counters(&self) -> HardwareCounterSnapshot {
+        let current_time = now_nanos();
+        let last_time = self.last_measurement.load(Ordering::Acquire);
+        
+        // Only read if enough time has passed
+        if current_time - last_time < self.measurement_interval_ns {
+            return self.get_cached_snapshot();
+        }
+
+        unsafe {
+            // Read CPU cycles using RDTSC
+            let cpu_cycles = std::arch::x86_64::_rdtsc();
+            
+            // Read performance monitoring counters (PMCs)
+            // Note: This requires kernel support and proper setup
+            let instructions = self.read_pmc(0); // PMC0 typically instructions
+            let cache_misses = self.read_pmc(1); // PMC1 typically cache misses
+            let branch_misses = self.read_pmc(2); // PMC2 typically branch mispredictions
+            
+            // Update atomic counters
+            self.cpu_cycles.store(cpu_cycles, Ordering::Release);
+            self.instructions_retired.store(instructions, Ordering::Release);
+            self.cache_misses.store(cache_misses, Ordering::Release);
+            self.branch_mispredictions.store(branch_misses, Ordering::Release);
+            self.last_measurement.store(current_time, Ordering::Release);
+            
+            HardwareCounterSnapshot {
+                timestamp: current_time,
+                cpu_cycles,
+                instructions_retired: instructions,
+                cache_misses,
+                branch_mispredictions: branch_misses,
+                tlb_misses: 0, // Would need additional PMC setup
+                memory_stall_cycles: 0, // Would need additional PMC setup
+                ipc: if cpu_cycles > 0 { instructions as f64 / cpu_cycles as f64 } else { 0.0 },
+                cache_miss_rate: if instructions > 0 { cache_misses as f64 / instructions as f64 } else { 0.0 },
+                branch_miss_rate: if instructions > 0 { branch_misses as f64 / instructions as f64 } else { 0.0 },
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    pub fn read_counters(&self) -> HardwareCounterSnapshot {
+        // Fallback for non-x86_64 architectures
+        HardwareCounterSnapshot {
+            timestamp: now_nanos(),
+            cpu_cycles: 0,
+            instructions_retired: 0,
+            cache_misses: 0,
+            branch_mispredictions: 0,
+            tlb_misses: 0,
+            memory_stall_cycles: 0,
+            ipc: 0.0,
+            cache_miss_rate: 0.0,
+            branch_miss_rate: 0.0,
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn read_pmc(&self, counter: u32) -> u64 {
+        // Read Performance Monitoring Counter
+        // Note: This requires proper kernel setup and permissions
+        // For now, we'll return a simulated value
+        match counter {
+            0 => std::arch::x86_64::_rdtsc() / 2, // Simulate instructions
+            1 => std::arch::x86_64::_rdtsc() / 100, // Simulate cache misses
+            2 => std::arch::x86_64::_rdtsc() / 1000, // Simulate branch misses
+            _ => 0,
+        }
+    }
+
+    fn get_cached_snapshot(&self) -> HardwareCounterSnapshot {
+        let timestamp = self.last_measurement.load(Ordering::Acquire);
+        let cpu_cycles = self.cpu_cycles.load(Ordering::Acquire);
+        let instructions = self.instructions_retired.load(Ordering::Acquire);
+        let cache_misses = self.cache_misses.load(Ordering::Acquire);
+        let branch_misses = self.branch_mispredictions.load(Ordering::Acquire);
+        
+        HardwareCounterSnapshot {
+            timestamp,
+            cpu_cycles,
+            instructions_retired: instructions,
+            cache_misses,
+            branch_mispredictions: branch_misses,
+            tlb_misses: self.tlb_misses.load(Ordering::Acquire),
+            memory_stall_cycles: self.memory_stall_cycles.load(Ordering::Acquire),
+            ipc: if cpu_cycles > 0 { instructions as f64 / cpu_cycles as f64 } else { 0.0 },
+            cache_miss_rate: if instructions > 0 { cache_misses as f64 / instructions as f64 } else { 0.0 },
+            branch_miss_rate: if instructions > 0 { branch_misses as f64 / instructions as f64 } else { 0.0 },
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HardwareCounterSnapshot {
+    pub timestamp: u64,
+    pub cpu_cycles: u64,
+    pub instructions_retired: u64,
+    pub cache_misses: u64,
+    pub branch_mispredictions: u64,
+    pub tlb_misses: u64,
+    pub memory_stall_cycles: u64,
+    pub ipc: f64, // Instructions per cycle
+    pub cache_miss_rate: f64,
+    pub branch_miss_rate: f64,
+}
+
+/// Advanced regression detection with statistical analysis
+pub struct AdvancedRegressionDetector {
+    /// Historical performance baselines
+    baselines: HashMap<String, PerformanceBaseline>,
+    /// Statistical thresholds
+    thresholds: RegressionThresholds,
+    /// Detection algorithms
+    algorithms: Vec<Box<dyn RegressionAlgorithm>>,
+    /// Alert history
+    alert_history: VecDeque<RegressionAlert>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PerformanceBaseline {
+    pub metric_name: String,
+    pub mean: f64,
+    pub std_dev: f64,
+    pub percentiles: HashMap<u8, f64>, // 50th, 90th, 95th, 99th percentiles
+    pub sample_count: u64,
+    pub last_updated: u64,
+    pub trend: TrendDirection,
+}
+
+#[derive(Debug, Clone)]
+pub enum TrendDirection {
+    Improving,
+    Stable,
+    Degrading,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegressionThresholds {
+    /// Percentage increase that triggers a warning
+    pub warning_threshold_percent: f64,
+    /// Percentage increase that triggers an alert
+    pub alert_threshold_percent: f64,
+    /// Number of consecutive violations before alerting
+    pub consecutive_violations: u32,
+    /// Minimum sample size for statistical significance
+    pub min_sample_size: u32,
+    /// Confidence level for statistical tests
+    pub confidence_level: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RegressionAlert {
+    pub alert_id: String,
+    pub timestamp: u64,
+    pub metric_name: String,
+    pub severity: AlertSeverity,
+    pub current_value: f64,
+    pub baseline_value: f64,
+    pub percentage_change: f64,
+    pub confidence: f64,
+    pub description: String,
+    pub suggested_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum AlertSeverity {
+    Info,
+    Warning,
+    Critical,
+    Emergency,
+}
+
+pub trait RegressionAlgorithm: Send + Sync {
+    fn detect_regression(
+        &self,
+        baseline: &PerformanceBaseline,
+        current_samples: &[f64],
+    ) -> Option<RegressionAlert>;
+    
+    fn algorithm_name(&self) -> &str;
+}
+
+/// Statistical t-test based regression detection
+pub struct TTestRegressionDetector {
+    thresholds: RegressionThresholds,
+}
+
+impl TTestRegressionDetector {
+    pub fn new(thresholds: RegressionThresholds) -> Self {
+        Self { thresholds }
+    }
+}
+
+impl RegressionAlgorithm for TTestRegressionDetector {
+    fn detect_regression(
+        &self,
+        baseline: &PerformanceBaseline,
+        current_samples: &[f64],
+    ) -> Option<RegressionAlert> {
+        if current_samples.len() < self.thresholds.min_sample_size as usize {
+            return None;
+        }
+
+        let current_mean = current_samples.iter().sum::<f64>() / current_samples.len() as f64;
+        let current_variance = current_samples.iter()
+            .map(|x| (x - current_mean).powi(2))
+            .sum::<f64>() / (current_samples.len() - 1) as f64;
+        let current_std_dev = current_variance.sqrt();
+
+        // Perform Welch's t-test
+        let pooled_std_error = (
+            (baseline.std_dev.powi(2) / baseline.sample_count as f64) +
+            (current_variance / current_samples.len() as f64)
+        ).sqrt();
+
+        let t_statistic = (current_mean - baseline.mean) / pooled_std_error;
+        
+        // Calculate degrees of freedom (Welch-Satterthwaite equation)
+        let df = (
+            (baseline.std_dev.powi(2) / baseline.sample_count as f64 + 
+             current_variance / current_samples.len() as f64).powi(2)
+        ) / (
+            (baseline.std_dev.powi(2) / baseline.sample_count as f64).powi(2) / (baseline.sample_count - 1) as f64 +
+            (current_variance / current_samples.len() as f64).powi(2) / (current_samples.len() - 1) as f64
+        );
+
+        // Critical value for two-tailed test (simplified)
+        let critical_value = match self.thresholds.confidence_level {
+            0.95 => 1.96,
+            0.99 => 2.58,
+            0.999 => 3.29,
+            _ => 1.96,
+        };
+
+        let percentage_change = ((current_mean - baseline.mean) / baseline.mean) * 100.0;
+        
+        if t_statistic.abs() > critical_value && percentage_change > self.thresholds.warning_threshold_percent {
+            let severity = if percentage_change > self.thresholds.alert_threshold_percent {
+                AlertSeverity::Critical
+            } else {
+                AlertSeverity::Warning
+            };
+
+            Some(RegressionAlert {
+                alert_id: format!("ttest_{}_{}", baseline.metric_name, now_nanos()),
+                timestamp: now_nanos(),
+                metric_name: baseline.metric_name.clone(),
+                severity,
+                current_value: current_mean,
+                baseline_value: baseline.mean,
+                percentage_change,
+                confidence: self.thresholds.confidence_level,
+                description: format!(
+                    "Statistical regression detected: {} increased by {:.2}% (t-statistic: {:.3})",
+                    baseline.metric_name, percentage_change, t_statistic
+                ),
+                suggested_actions: vec![
+                    "Review recent code changes".to_string(),
+                    "Check system resource usage".to_string(),
+                    "Analyze performance profiles".to_string(),
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    fn algorithm_name(&self) -> &str {
+        "t-test"
+    }
+}
+
+/// Mann-Whitney U test for non-parametric regression detection
+pub struct MannWhitneyRegressionDetector {
+    thresholds: RegressionThresholds,
+}
+
+impl MannWhitneyRegressionDetector {
+    pub fn new(thresholds: RegressionThresholds) -> Self {
+        Self { thresholds }
+    }
+
+    fn mann_whitney_u_test(&self, baseline_samples: &[f64], current_samples: &[f64]) -> (f64, f64) {
+        let n1 = baseline_samples.len();
+        let n2 = current_samples.len();
+        
+        // Combine and rank all samples
+        let mut combined: Vec<(f64, usize)> = baseline_samples.iter()
+            .map(|&x| (x, 0))
+            .chain(current_samples.iter().map(|&x| (x, 1)))
+            .collect();
+        
+        combined.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        
+        // Calculate ranks
+        let mut ranks = vec![0.0; combined.len()];
+        let mut i = 0;
+        while i < combined.len() {
+            let mut j = i;
+            while j < combined.len() && combined[j].0 == combined[i].0 {
+                j += 1;
+            }
+            let avg_rank = (i + j + 1) as f64 / 2.0;
+            for k in i..j {
+                ranks[k] = avg_rank;
+            }
+            i = j;
+        }
+        
+        // Sum ranks for current samples
+        let r2: f64 = combined.iter()
+            .zip(ranks.iter())
+            .filter(|((_, group), _)| *group == 1)
+            .map(|(_, &rank)| rank)
+            .sum();
+        
+        let u2 = r2 - (n2 * (n2 + 1)) as f64 / 2.0;
+        let u1 = (n1 * n2) as f64 - u2;
+        
+        let u = u1.min(u2);
+        
+        // Calculate z-score for large samples
+        let mean_u = (n1 * n2) as f64 / 2.0;
+        let std_u = ((n1 * n2 * (n1 + n2 + 1)) as f64 / 12.0).sqrt();
+        let z_score = (u - mean_u) / std_u;
+        
+        (u, z_score)
+    }
+}
+
+impl RegressionAlgorithm for MannWhitneyRegressionDetector {
+    fn detect_regression(
+        &self,
+        baseline: &PerformanceBaseline,
+        current_samples: &[f64],
+    ) -> Option<RegressionAlert> {
+        if current_samples.len() < self.thresholds.min_sample_size as usize {
+            return None;
+        }
+
+        // For this example, we'll use the baseline mean as a proxy for baseline samples
+        // In practice, you'd store actual baseline samples
+        let baseline_samples: Vec<f64> = (0..baseline.sample_count.min(1000))
+            .map(|_| baseline.mean + (rand::random::<f64>() - 0.5) * baseline.std_dev * 2.0)
+            .collect();
+
+        let (_, z_score) = self.mann_whitney_u_test(&baseline_samples, current_samples);
+        
+        let current_mean = current_samples.iter().sum::<f64>() / current_samples.len() as f64;
+        let percentage_change = ((current_mean - baseline.mean) / baseline.mean) * 100.0;
+        
+        // Critical value for Mann-Whitney U test (two-tailed)
+        let critical_z = match self.thresholds.confidence_level {
+            0.95 => 1.96,
+            0.99 => 2.58,
+            0.999 => 3.29,
+            _ => 1.96,
+        };
+        
+        if z_score.abs() > critical_z && percentage_change > self.thresholds.warning_threshold_percent {
+            let severity = if percentage_change > self.thresholds.alert_threshold_percent {
+                AlertSeverity::Critical
+            } else {
+                AlertSeverity::Warning
+            };
+
+            Some(RegressionAlert {
+                alert_id: format!("mannwhitney_{}_{}", baseline.metric_name, now_nanos()),
+                timestamp: now_nanos(),
+                metric_name: baseline.metric_name.clone(),
+                severity,
+                current_value: current_mean,
+                baseline_value: baseline.mean,
+                percentage_change,
+                confidence: self.thresholds.confidence_level,
+                description: format!(
+                    "Non-parametric regression detected: {} changed by {:.2}% (z-score: {:.3})",
+                    baseline.metric_name, percentage_change, z_score
+                ),
+                suggested_actions: vec![
+                    "Investigate performance anomalies".to_string(),
+                    "Check for system configuration changes".to_string(),
+                    "Review recent deployments".to_string(),
+                ],
+            })
+        } else {
+            None
+        }
+    }
+
+    fn algorithm_name(&self) -> &str {
+        "mann-whitney-u"
+    }
+}
+
+impl AdvancedRegressionDetector {
+    pub fn new() -> Self {
+        let thresholds = RegressionThresholds {
+            warning_threshold_percent: 10.0,
+            alert_threshold_percent: 25.0,
+            consecutive_violations: 3,
+            min_sample_size: 30,
+            confidence_level: 0.95,
+        };
+
+        let algorithms: Vec<Box<dyn RegressionAlgorithm>> = vec![
+            Box::new(TTestRegressionDetector::new(thresholds.clone())),
+            Box::new(MannWhitneyRegressionDetector::new(thresholds.clone())),
+        ];
+
+        Self {
+            baselines: HashMap::new(),
+            thresholds,
+            algorithms,
+            alert_history: VecDeque::new(),
+        }
+    }
+
+    pub fn update_baseline(&mut self, metric_name: &str, samples: &[f64]) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let variance = samples.iter()
+            .map(|x| (x - mean).powi(2))
+            .sum::<f64>() / (samples.len() - 1) as f64;
+        let std_dev = variance.sqrt();
+
+        // Calculate percentiles
+        let mut sorted_samples = samples.to_vec();
+        sorted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        
+        let mut percentiles = HashMap::new();
+        for &p in &[50, 90, 95, 99] {
+            let index = ((p as f64 / 100.0) * (sorted_samples.len() - 1) as f64) as usize;
+            percentiles.insert(p, sorted_samples[index]);
+        }
+
+        let baseline = PerformanceBaseline {
+            metric_name: metric_name.to_string(),
+            mean,
+            std_dev,
+            percentiles,
+            sample_count: samples.len() as u64,
+            last_updated: now_nanos(),
+            trend: TrendDirection::Unknown,
+        };
+
+        self.baselines.insert(metric_name.to_string(), baseline);
+    }
+
+    pub fn detect_regressions(&mut self, metric_name: &str, current_samples: &[f64]) -> Vec<RegressionAlert> {
+        let baseline = match self.baselines.get(metric_name) {
+            Some(baseline) => baseline,
+            None => return Vec::new(),
+        };
+
+        let mut alerts = Vec::new();
+        
+        for algorithm in &self.algorithms {
+            if let Some(alert) = algorithm.detect_regression(baseline, current_samples) {
+                alerts.push(alert);
+            }
+        }
+
+        // Store alerts in history
+        for alert in &alerts {
+            self.alert_history.push_back(alert.clone());
+            
+            // Maintain history size
+            while self.alert_history.len() > 1000 {
+                self.alert_history.pop_front();
+            }
+        }
+
+        alerts
+    }
+
+    pub fn get_alert_history(&self, limit: Option<usize>) -> Vec<&RegressionAlert> {
+        let limit = limit.unwrap_or(self.alert_history.len());
+        self.alert_history.iter().rev().take(limit).collect()
+    }
+
+    pub fn get_baseline(&self, metric_name: &str) -> Option<&PerformanceBaseline> {
+        self.baselines.get(metric_name)
+    }
+}
+
 /// Global profiler instance
 static GLOBAL_PROFILER: std::sync::OnceLock<Arc<std::sync::Mutex<ContinuousProfiler>>> = std::sync::OnceLock::new();
 

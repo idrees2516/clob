@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicU32, AtomicUsize, Ordering};
 use std::ptr;
+use crate::math::fixed_point::FixedPoint;
 
 /// Memory ordering for high-performance atomic operations
 #[derive(Debug, Clone, Copy)]
@@ -272,6 +273,70 @@ impl RetryableAtomicOps {
                 }
             }
         }
+    }
+}
+
+/// Atomic FixedPoint for ultra-low latency financial calculations
+#[repr(align(64))]
+pub struct AtomicFixedPoint {
+    value: AtomicU64,
+    _padding: [u8; 64 - std::mem::size_of::<AtomicU64>()],
+}
+
+impl AtomicFixedPoint {
+    pub fn new(value: FixedPoint) -> Self {
+        Self {
+            value: AtomicU64::new(value.to_raw()),
+            _padding: [0; 64 - std::mem::size_of::<AtomicU64>()],
+        }
+    }
+
+    #[inline(always)]
+    pub fn load(&self, order: Ordering) -> FixedPoint {
+        FixedPoint::from_raw(self.value.load(order))
+    }
+
+    #[inline(always)]
+    pub fn store(&self, value: FixedPoint, order: Ordering) {
+        self.value.store(value.to_raw(), order);
+    }
+
+    #[inline(always)]
+    pub fn compare_exchange_weak(
+        &self,
+        current: FixedPoint,
+        new: FixedPoint,
+        success: Ordering,
+        failure: Ordering,
+    ) -> Result<FixedPoint, FixedPoint> {
+        match self.value.compare_exchange_weak(
+            current.to_raw(),
+            new.to_raw(),
+            success,
+            failure,
+        ) {
+            Ok(old) => Ok(FixedPoint::from_raw(old)),
+            Err(actual) => Err(FixedPoint::from_raw(actual)),
+        }
+    }
+
+    #[inline(always)]
+    pub fn fetch_add(&self, value: FixedPoint, order: Ordering) -> FixedPoint {
+        // Note: This is a simplified implementation for demonstration
+        // In practice, you'd need proper fixed-point arithmetic
+        let old = self.value.fetch_add(value.to_raw(), order);
+        FixedPoint::from_raw(old)
+    }
+
+    #[inline(always)]
+    pub fn fetch_sub(&self, value: FixedPoint, order: Ordering) -> FixedPoint {
+        let old = self.value.fetch_sub(value.to_raw(), order);
+        FixedPoint::from_raw(old)
+    }
+
+    #[inline(always)]
+    pub fn swap(&self, value: FixedPoint, order: Ordering) -> FixedPoint {
+        FixedPoint::from_raw(self.value.swap(value.to_raw(), order))
     }
 }
 

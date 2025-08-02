@@ -1,0 +1,206 @@
+version: '3.8'
+
+services:
+  trading-system:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    image: advanced-trading-system:latest
+    container_name: trading-system
+    hostname: trading-system
+    restart: unless-stopped
+    
+    # Performance optimizations
+    cpuset: "0-7"  # Dedicated CPU cores
+    mem_limit: 16g
+    mem_reservation: 8g
+    memswap_limit: 16g
+    mem_swappiness: 0
+    
+    # Security context
+    cap_add:
+      - SYS_NICE      # Real-time scheduling
+      - IPC_LOCK      # Memory locking
+      - NET_RAW       # Raw socket access
+      - NET_ADMIN     # Network administration
+    
+    # System limits
+    ulimits:
+      rtprio: 99
+      memlock: -1
+      nofile: 1048576
+    
+    # Shared memory and huge pages
+    shm_size: 2g
+    devices:
+      - /dev/hugepages:/dev/hugepages
+    
+    # Network configuration
+    network_mode: host  # For minimum latency
+    
+    # Environment variables
+    environment:
+      - RUST_LOG=info
+      - NUMA_NODE=0
+      - CPU_AFFINITY=0-7
+      - HUGE_PAGES_ENABLED=true
+      - PERFORMANCE_MODE=ultra_low_latency
+    
+    # Volume mounts
+    volumes:
+      - trading_data:/opt/trading/data
+      - trading_logs:/opt/trading/logs
+      - trading_backup:/opt/trading/backup
+      - trading_config:/opt/trading/config
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+      - /proc/sys/kernel:/proc/sys/kernel:ro
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+        compress: "true"
+    
+    # Dependencies
+    depends_on:
+      - prometheus
+      - grafana
+      - redis
+      - postgres
+
+  # Monitoring stack
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+
+  # Redis for caching and pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+
+  # PostgreSQL for persistent data
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=trading
+      - POSTGRES_USER=trading
+      - POSTGRES_PASSWORD=trading123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  # Log aggregation
+  fluentd:
+    image: fluent/fluentd:v1.16-debian-1
+    container_name: fluentd
+    restart: unless-stopped
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    volumes:
+      - ./logging/fluentd.conf:/fluentd/etc/fluent.conf
+      - fluentd_logs:/var/log/fluentd
+
+  # Backup service
+  backup-service:
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    container_name: backup-service
+    restart: unless-stopped
+    environment:
+      - BACKUP_SCHEDULE=0 2 * * *  # Daily at 2 AM
+      - RETENTION_DAYS=30
+    volumes:
+      - trading_data:/data/trading:ro
+      - trading_backup:/backup
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  trading_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/trading/data
+  
+  trading_logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/trading/logs
+  
+  trading_backup:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/trading/backup
+  
+  trading_config:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/trading/config
+  
+  prometheus_data:
+  grafana_data:
+  redis_data:
+  postgres_data:
+  fluentd_logs:
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

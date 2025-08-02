@@ -23,7 +23,17 @@ pub struct GarchModel {
 }
 
 impl GarchModel {
-    pub fn new(omega: f64, alpha: f64, beta: f64) -> Result<Self, GarchError> {
+    pub fn new() -> Self {
+        Self {
+            omega: 0.0,
+            alpha: 0.0,
+            beta: 0.0,
+            returns: Vec::new(),
+            volatilities: Vec::new(),
+        }
+    }
+
+    pub fn with_params(omega: f64, alpha: f64, beta: f64) -> Result<Self, GarchError> {
         // Validate parameters
         if omega <= 0.0 {
             return Err(GarchError::InvalidParameters(
@@ -181,6 +191,39 @@ impl GarchModel {
         }
         
         Ok(forecasts)
+    }
+
+    pub fn forecast_volatility(&self, horizon: usize) -> Result<crate::math::fixed_point::FixedPoint, GarchError> {
+        if self.returns.is_empty() {
+            return Err(GarchError::InsufficientData(
+                "Model must be fitted before forecasting".to_string(),
+            ));
+        }
+
+        let mut last_variance = *self.volatilities.last().unwrap();
+        
+        for _ in 0..horizon {
+            last_variance = self.omega + self.alpha * self.returns.last().unwrap().powi(2) 
+                + self.beta * last_variance;
+        }
+        
+        // Return volatility (square root of variance)
+        Ok(crate::math::fixed_point::FixedPoint::from_float(last_variance.sqrt()))
+    }
+
+    pub fn fit(&mut self, returns: &[crate::math::fixed_point::FixedPoint]) -> Result<(), crate::error::RiskError> {
+        if returns.len() < 10 {
+            return Err(crate::error::RiskError::InsufficientData(
+                "Need at least 10 observations for GARCH fitting".to_string(),
+            ));
+        }
+
+        // Convert FixedPoint returns to f64 for internal processing
+        let f64_returns: Vec<f64> = returns.iter().map(|r| r.to_float()).collect();
+        
+        // Use existing fit method with default parameters
+        self.fit(f64_returns, 100, 1e-6)
+            .map_err(|e| crate::error::RiskError::ModelError(e.to_string()))
     }
 
     pub fn get_volatilities(&self) -> &[f64] {
