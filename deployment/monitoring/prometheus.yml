@@ -1,0 +1,94 @@
+global:
+  scrape_interval: 1s
+  evaluation_interval: 1s
+  scrape_timeout: 500ms
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Trading system metrics
+  - job_name: 'trading-system'
+    scrape_interval: 100ms  # High frequency for trading metrics
+    scrape_timeout: 50ms
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['trading-system:8080']
+    metric_relabel_configs:
+      # Keep only critical trading metrics for high-frequency collection
+      - source_labels: [__name__]
+        regex: 'trading_(latency|throughput|errors|positions|risk).*'
+        action: keep
+
+  # System metrics
+  - job_name: 'node-exporter'
+    scrape_interval: 1s
+    static_configs:
+      - targets: ['node-exporter:9100']
+    metric_relabel_configs:
+      # Focus on performance-critical system metrics
+      - source_labels: [__name__]
+        regex: 'node_(cpu|memory|network|disk).*'
+        action: keep
+
+  # Container metrics
+  - job_name: 'cadvisor'
+    scrape_interval: 1s
+    static_configs:
+      - targets: ['cadvisor:8080']
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'container_(cpu|memory|network|fs).*'
+        action: keep
+
+  # Database metrics
+  - job_name: 'postgres-exporter'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+  # Redis metrics
+  - job_name: 'redis-exporter'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Network metrics
+  - job_name: 'snmp-exporter'
+    scrape_interval: 1s
+    static_configs:
+      - targets: ['network-switch:161']
+    metrics_path: /snmp
+    params:
+      module: [if_mib]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+# Storage configuration for high-frequency data
+storage:
+  tsdb:
+    path: /prometheus/data
+    retention.time: 7d
+    retention.size: 100GB
+    min-block-duration: 1m
+    max-block-duration: 2m
+    wal-compression: true
+
+# Remote write for long-term storage
+remote_write:
+  - url: "http://thanos-receive:19291/api/v1/receive"
+    queue_config:
+      max_samples_per_send: 10000
+      max_shards: 200
+      capacity: 100000

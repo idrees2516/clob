@@ -1,0 +1,274 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-system-config
+  namespace: trading-system
+data:
+  production.toml: |
+    [system]
+    name = "advanced-trading-system"
+    version = "1.0.0"
+    environment = "production"
+    
+    [performance]
+    target_latency_ns = 500
+    max_cpu_usage = 0.8
+    memory_pool_size = 1073741824  # 1GB
+    numa_node = 0
+    cpu_affinity = [0, 1, 2, 3, 4, 5, 6, 7]
+    huge_pages_enabled = true
+    
+    [models.avellaneda_stoikov]
+    enabled = true
+    gamma = 0.1
+    sigma = 0.2
+    k = 1.5
+    A = 140.0
+    T = 1.0
+    
+    [models.gueant_lehalle_tapia]
+    enabled = true
+    correlation_window = 252
+    rebalance_frequency = 3600  # 1 hour
+    
+    [models.cartea_jaimungal]
+    enabled = true
+    jump_detection_threshold = 3.0
+    jump_intensity_window = 100
+    
+    [execution.twap]
+    enabled = true
+    default_participation_rate = 0.1
+    max_participation_rate = 0.3
+    volume_forecast_window = 20
+    
+    [risk_management]
+    max_position_size = 1000000
+    max_portfolio_var = 100000.0
+    max_leverage = 3.0
+    var_confidence = 0.95
+    stress_test_frequency = 3600  # 1 hour
+    
+    [market_data]
+    feed_url = "tcp://market-data-feed:12345"
+    buffer_size = 1048576  # 1MB
+    timeout_ms = 1000
+    
+    [database]
+    url = "postgresql://trading:trading123@postgres:5432/trading"
+    max_connections = 20
+    connection_timeout = 30
+    
+    [redis]
+    url = "redis://redis:6379"
+    max_connections = 10
+    timeout_ms = 1000
+    
+    [monitoring]
+    metrics_port = 8080
+    health_port = 8081
+    admin_port = 8082
+    prometheus_enabled = true
+    
+    [logging]
+    level = "info"
+    format = "json"
+    file_path = "/opt/trading/logs/trading.log"
+    max_file_size = "100MB"
+    max_files = 10
+    
+  logging.yaml: |
+    version: 1
+    disable_existing_loggers: false
+    
+    formatters:
+      json:
+        format: '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s", "thread": "%(thread)d", "process": "%(process)d"}'
+        datefmt: '%Y-%m-%dT%H:%M:%S.%fZ'
+      
+      structured:
+        format: '[%(asctime)s] %(levelname)s [%(name)s:%(lineno)d] %(message)s'
+        datefmt: '%Y-%m-%d %H:%M:%S'
+    
+    handlers:
+      console:
+        class: logging.StreamHandler
+        level: INFO
+        formatter: structured
+        stream: ext://sys.stdout
+      
+      file:
+        class: logging.handlers.RotatingFileHandler
+        level: DEBUG
+        formatter: json
+        filename: /opt/trading/logs/trading.log
+        maxBytes: 104857600  # 100MB
+        backupCount: 10
+      
+      performance:
+        class: logging.handlers.RotatingFileHandler
+        level: DEBUG
+        formatter: json
+        filename: /opt/trading/logs/performance.log
+        maxBytes: 52428800  # 50MB
+        backupCount: 5
+    
+    loggers:
+      trading.performance:
+        level: DEBUG
+        handlers: [performance]
+        propagate: false
+      
+      trading.models:
+        level: INFO
+        handlers: [file, console]
+        propagate: false
+      
+      trading.execution:
+        level: INFO
+        handlers: [file, console]
+        propagate: false
+      
+      trading.risk:
+        level: WARN
+        handlers: [file, console]
+        propagate: false
+    
+    root:
+      level: INFO
+      handlers: [console, file]
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-system-scripts
+  namespace: trading-system
+data:
+  entrypoint.sh: |
+    #!/bin/bash
+    set -e
+    
+    # Configure system for high-performance trading
+    echo "Configuring system for ultra-low latency..."
+    
+    # Set CPU governor to performance
+    if [ -w /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor ]; then
+        echo performance > /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+    fi
+    
+    # Configure NUMA if available
+    if command -v numactl &> /dev/null; then
+        export NUMA_ARGS="--cpunodebind=${NUMA_NODE:-0} --membind=${NUMA_NODE:-0}"
+    fi
+    
+    # Set CPU affinity if specified
+    if [ -n "$CPU_AFFINITY" ]; then
+        export TASKSET_ARGS="-c $CPU_AFFINITY"
+    fi
+    
+    # Configure huge pages
+    if [ "$HUGE_PAGES_ENABLED" = "true" ]; then
+        echo "Configuring huge pages..."
+        if [ -w /proc/sys/vm/nr_hugepages ]; then
+            echo 2048 > /proc/sys/vm/nr_hugepages
+        fi
+    fi
+    
+    # Wait for dependencies
+    echo "Waiting for dependencies..."
+    while ! nc -z postgres 5432; do
+        echo "Waiting for PostgreSQL..."
+        sleep 1
+    done
+    
+    while ! nc -z redis 6379; do
+        echo "Waiting for Redis..."
+        sleep 1
+    done
+    
+    echo "All dependencies ready. Starting trading system..."
+    
+    # Start the application with optimizations
+    exec ${TASKSET_ARGS} ${NUMA_ARGS} /opt/trading/bin/advanced_trading_system "$@"
+  
+  health-check.sh: |
+    #!/bin/bash
+    
+    # Check if the main process is running
+    if ! pgrep -f advanced_trading_system > /dev/null; then
+        echo "Trading system process not found"
+        exit 1
+    fi
+    
+    # Check health endpoint
+    if ! curl -f -s http://localhost:8081/health > /dev/null; then
+        echo "Health endpoint not responding"
+        exit 1
+    fi
+    
+    # Check metrics endpoint
+    if ! curl -f -s http://localhost:8080/metrics > /dev/null; then
+        echo "Metrics endpoint not responding"
+        exit 1
+    fi
+    
+    # Check latency is within acceptable range
+    LATENCY=$(curl -s http://localhost:8080/metrics | grep 'trading_latency_p99' | awk '{print $2}')
+    if [ -n "$LATENCY" ] && [ "$(echo "$LATENCY > 0.0005" | bc)" -eq 1 ]; then
+        echo "Latency too high: ${LATENCY}s"
+        exit 1
+    fi
+    
+    echo "All health checks passed"
+    exit 0
+  
+  backup.sh: |
+    #!/bin/bash
+    set -e
+    
+    BACKUP_DIR="/opt/trading/backup"
+    DATA_DIR="/opt/trading/data"
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_NAME="trading_backup_${TIMESTAMP}"
+    
+    echo "Starting backup: $BACKUP_NAME"
+    
+    # Create backup directory
+    mkdir -p "$BACKUP_DIR/$BACKUP_NAME"
+    
+    # Backup configuration
+    cp -r /opt/trading/config "$BACKUP_DIR/$BACKUP_NAME/"
+    
+    # Backup data
+    if [ -d "$DATA_DIR" ]; then
+        tar -czf "$BACKUP_DIR/$BACKUP_NAME/data.tar.gz" -C "$DATA_DIR" .
+    fi
+    
+    # Backup database
+    pg_dump -h postgres -U trading trading > "$BACKUP_DIR/$BACKUP_NAME/database.sql"
+    
+    # Create backup manifest
+    cat > "$BACKUP_DIR/$BACKUP_NAME/manifest.json" << EOF
+    {
+        "timestamp": "$TIMESTAMP",
+        "version": "1.0.0",
+        "components": [
+            "configuration",
+            "data",
+            "database"
+        ],
+        "size_bytes": $(du -sb "$BACKUP_DIR/$BACKUP_NAME" | cut -f1)
+    }
+    EOF
+    
+    # Compress entire backup
+    tar -czf "$BACKUP_DIR/$BACKUP_NAME.tar.gz" -C "$BACKUP_DIR" "$BACKUP_NAME"
+    rm -rf "$BACKUP_DIR/$BACKUP_NAME"
+    
+    echo "Backup completed: $BACKUP_NAME.tar.gz"
+    
+    # Cleanup old backups (keep last 30 days)
+    find "$BACKUP_DIR" -name "trading_backup_*.tar.gz" -mtime +30 -delete
+    
+    echo "Backup cleanup completed"

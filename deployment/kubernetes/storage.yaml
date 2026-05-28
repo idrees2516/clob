@@ -1,0 +1,155 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: high-performance-ssd
+  labels:
+    app: trading-system
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: "nvme-ssd"
+  iops: "10000"
+  throughput: "1000"
+reclaimPolicy: Retain
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: trading-data-pv
+  labels:
+    app: trading-system
+    component: data
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: high-performance-ssd
+  local:
+    path: /opt/trading/data
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: node-type
+          operator: In
+          values:
+          - high-performance
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: trading-logs-pv
+  labels:
+    app: trading-system
+    component: logs
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: high-performance-ssd
+  local:
+    path: /opt/trading/logs
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: node-type
+          operator: In
+          values:
+          - high-performance
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: trading-backup-pv
+  labels:
+    app: trading-system
+    component: backup
+spec:
+  capacity:
+    storage: 200Gi
+  accessModes:
+  - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: high-performance-ssd
+  local:
+    path: /opt/trading/backup
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: node-type
+          operator: In
+          values:
+          - high-performance
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trading-data-pvc
+  namespace: trading-system
+  labels:
+    app: trading-system
+    component: data
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: high-performance-ssd
+  selector:
+    matchLabels:
+      app: trading-system
+      component: data
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trading-logs-pvc
+  namespace: trading-system
+  labels:
+    app: trading-system
+    component: logs
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: high-performance-ssd
+  selector:
+    matchLabels:
+      app: trading-system
+      component: logs
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trading-backup-pvc
+  namespace: trading-system
+  labels:
+    app: trading-system
+    component: backup
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 200Gi
+  storageClassName: high-performance-ssd
+  selector:
+    matchLabels:
+      app: trading-system
+      component: backup

@@ -1,0 +1,330 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trading-system
+  namespace: trading-system
+  labels:
+    app: trading-system
+    version: v1.0.0
+    component: core
+spec:
+  replicas: 1  # Single instance for consistency
+  strategy:
+    type: Recreate  # Avoid multiple instances
+  selector:
+    matchLabels:
+      app: trading-system
+  template:
+    metadata:
+      labels:
+        app: trading-system
+        version: v1.0.0
+        component: core
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # High priority for trading workload
+      priorityClassName: system-node-critical
+      
+      # Node selection for high-performance nodes
+      nodeSelector:
+        node-type: high-performance
+        numa-topology: "true"
+      
+      # Pod anti-affinity to avoid resource contention
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - trading-system
+            topologyKey: kubernetes.io/hostname
+      
+      # Tolerations for dedicated nodes
+      tolerations:
+      - key: "trading-workload"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      
+      # Service account for monitoring
+      serviceAccountName: trading-system
+      
+      # Security context
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        supplementalGroups: [1000]
+      
+      # Init container for system preparation
+      initContainers:
+      - name: system-init
+        image: busybox:1.35
+        command:
+        - sh
+        - -c
+        - |
+          echo "Preparing system for high-performance trading..."
+          # Create required directories
+          mkdir -p /opt/trading/{data,logs,backup}
+          chown -R 1000:1000 /opt/trading
+          # Validate huge pages
+          if [ -r /proc/meminfo ]; then
+            HUGEPAGES=$(grep HugePages_Total /proc/meminfo | awk '{print $2}')
+            if [ "$HUGEPAGES" -lt 1024 ]; then
+              echo "Warning: Insufficient huge pages configured ($HUGEPAGES)"
+            fi
+          fi
+        volumeMounts:
+        - name: trading-data
+          mountPath: /opt/trading/data
+        - name: trading-logs
+          mountPath: /opt/trading/logs
+        - name: trading-backup
+          mountPath: /opt/trading/backup
+        securityContext:
+          runAsUser: 0  # Root for system configuration
+      
+      containers:
+      - name: trading-system
+        image: advanced-trading-system:latest
+        imagePullPolicy: Always
+        
+        # Resource requirements for high-performance trading
+        resources:
+          requests:
+            cpu: "8"
+            memory: "16Gi"
+            hugepages-2Mi: "4Gi"
+          limits:
+            cpu: "8"
+            memory: "16Gi"
+            hugepages-2Mi: "4Gi"
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            add:
+            - SYS_NICE      # Real-time scheduling
+            - IPC_LOCK      # Memory locking
+            - NET_RAW       # Raw socket access
+            drop:
+            - ALL
+        
+        # Environment variables
+        env:
+        - name: RUST_LOG
+          value: "info"
+        - name: NUMA_NODE
+          value: "0"
+        - name: CPU_AFFINITY
+          value: "0-7"
+        - name: HUGE_PAGES_ENABLED
+          value: "true"
+        - name: PERFORMANCE_MODE
+          value: "ultra_low_latency"
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        
+        # Ports
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        - name: health
+          containerPort: 8081
+          protocol: TCP
+        - name: admin
+          containerPort: 8082
+          protocol: TCP
+        
+        # Volume mounts
+        volumeMounts:
+        - name: trading-config
+          mountPath: /opt/trading/config
+          readOnly: true
+        - name: trading-scripts
+          mountPath: /opt/trading/scripts
+          readOnly: true
+        - name: trading-data
+          mountPath: /opt/trading/data
+        - name: trading-logs
+          mountPath: /opt/trading/logs
+        - name: trading-backup
+          mountPath: /opt/trading/backup
+        - name: hugepages
+          mountPath: /dev/hugepages
+        - name: tmp
+          mountPath: /tmp
+        
+        # Startup probe
+        startupProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 10
+          successThreshold: 1
+        
+        # Liveness probe
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: health
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Readiness probe
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+          successThreshold: 1
+        
+        # Lifecycle hooks
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "Gracefully shutting down trading system..."
+                curl -X POST http://localhost:8082/shutdown
+                sleep 10
+      
+      # Volumes
+      volumes:
+      - name: trading-config
+        configMap:
+          name: trading-system-config
+          defaultMode: 0644
+      - name: trading-scripts
+        configMap:
+          name: trading-system-scripts
+          defaultMode: 0755
+      - name: trading-data
+        persistentVolumeClaim:
+          claimName: trading-data-pvc
+      - name: trading-logs
+        persistentVolumeClaim:
+          claimName: trading-logs-pvc
+      - name: trading-backup
+        persistentVolumeClaim:
+          claimName: trading-backup-pvc
+      - name: hugepages
+        emptyDir:
+          medium: HugePages-2Mi
+          sizeLimit: 4Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      
+      # DNS configuration for low latency
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "1"
+        - name: edns0
+      
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+      
+      # Restart policy
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trading-system-service
+  namespace: trading-system
+  labels:
+    app: trading-system
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  selector:
+    app: trading-system
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: metrics
+    protocol: TCP
+  - name: health
+    port: 8081
+    targetPort: health
+    protocol: TCP
+  - name: admin
+    port: 8082
+    targetPort: admin
+    protocol: TCP
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trading-system
+  namespace: trading-system
+  labels:
+    app: trading-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: trading-system-role
+  namespace: trading-system
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: trading-system-rolebinding
+  namespace: trading-system
+subjects:
+- kind: ServiceAccount
+  name: trading-system
+  namespace: trading-system
+roleRef:
+  kind: Role
+  name: trading-system-role
+  apiGroup: rbac.authorization.k8s.io

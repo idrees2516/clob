@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading-system
+  labels:
+    name: trading-system
+    environment: production
+    criticality: high
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: trading-system-quota
+  namespace: trading-system
+spec:
+  hard:
+    requests.cpu: "32"
+    requests.memory: 128Gi
+    limits.cpu: "64"
+    limits.memory: 256Gi
+    persistentvolumeclaims: "10"
+    services: "20"
+    secrets: "10"
+    configmaps: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: trading-system-limits
+  namespace: trading-system
+spec:
+  limits:
+  - default:
+      cpu: "4"
+      memory: "8Gi"
+    defaultRequest:
+      cpu: "2"
+      memory: "4Gi"
+    type: Container
+  - default:
+      storage: "10Gi"
+    type: PersistentVolumeClaim
