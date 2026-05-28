@@ -1,0 +1,71 @@
+{
+  "exclude": [
+    "lib",
+    "node_modules",
+    "out",
+    "cache",
+    "build",
+    "diff",
+    ".git",
+    ".husky",
+    "contracts",
+    "script",
+    "test",
+    "audits",
+    "assets"
+  ],
+  "repo_notes": [
+    "This repository contains a high-performance off-chain Central Limit Order Book (CLOB) tailored for options trading.",
+    "The core focus is on the Options Trading Engine, the zkVM proving infrastructure, and the Based Rollup sequencing.",
+    "The execution engine matches options trades off-chain at microsecond latency.",
+    "The zkVM integration and lattice-based cryptography generate succinct proofs of matching correctness and risk state transitions."
+  ],
+  "pages": [
+    {
+      "title": "Options Trading Engine (Core CLOB)",
+      "purpose": "The core off-chain matching engine, in-memory orderbook structures (B-Trees/Queues), and trade execution logic.",
+      "paths": [
+        "clob;limit order book/src/orderbook",
+        "clob;limit order book/src/execution"
+      ]
+    },
+    {
+      "title": "zkVM Proving Infrastructure",
+      "purpose": "Integration with zkVMs (SP1/RISC Zero), guest programs for proving trade validity, and the Lighter Prover implementation.",
+      "paths": [
+        "clob;limit order book/src/zkvm",
+        "lighter-prover"
+      ]
+    },
+    {
+      "title": "Based Rollup Sequencer",
+      "purpose": "The L2 sequencing layer that collects orders into deterministic batches, computes state roots, and manages Data Availability (EIP-4844 blobs).",
+      "paths": [
+        "clob;limit order book/src/rollup"
+      ]
+    },
+    {
+      "title": "Risk & Margin Engine",
+      "purpose": "Off-chain risk management including margin calculation, wash trade detection, Auto-Deleveraging (ADL), and volatility fusion.",
+      "paths": [
+        "clob;limit order book/src/risk",
+        "clob;limit order book/src/microstructure"
+      ]
+    },
+    {
+      "title": "Circuit-Compatible Options Math",
+      "purpose": "Fixed-point mathematical implementations designed to run deterministically inside the zkVM for Black-Scholes pricing and Greeks.",
+      "paths": [
+        "clob;limit order book/src/math",
+        "clob;limit order book/src/models"
+      ]
+    },
+    {
+      "title": "Lattice Cryptography",
+      "purpose": "Quantum-resistant LatticeFold+ implementations, SIS commitments, and recursive folding for proof aggregation.",
+      "paths": [
+        "full lattice zkvm impl from papers"
+      ]
+    }
+  ]
+}
